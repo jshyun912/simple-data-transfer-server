@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>파일 업로드</title>
+<link rel="stylesheet" href="/ui.css">
+<header><div><span class="eyebrow">LOCAL TRANSFER</span><h1>파일을 주고받는 가장 간단한 방법</h1><p>같은 네트워크에서 빠르고 편리하게 공유하세요.</p></div><!--LOCAL_NAV--></header>
+<main class="panel">
+<h2><span class="section-number">01</span>파일 보내기</h2>
+<p>파일을 선택해 이 컴퓨터로 보내세요. 용량 제한 없이 전송합니다.</p>
+<form id="form"><input id="files" type="file" multiple required><button id="send">업로드</button></form>
+<progress id="progress" value="0" max="100" hidden></progress>
+<ul id="results" aria-live="polite"></ul>
+</main><main class="panel"><h2><span class="section-number">02</span>파일 받기</h2>
+<p>이 컴퓨터에서 공유한 파일입니다.</p>
+<ul id="downloads" aria-live="polite"></ul>
+</main>
+<script>
+const form=document.querySelector('#form'), files=document.querySelector('#files'), send=document.querySelector('#send'), results=document.querySelector('#results'), progress=document.querySelector('#progress');
+async function loadDownloads(){
+  const list=document.querySelector('#downloads');
+  try{
+    const response=await fetch('/api/files');if(!response.ok)throw new Error();
+    const items=await response.json();list.replaceChildren();
+    if(!items.length)list.textContent='공유 중인 파일이 없습니다.';
+    for(const item of items){const row=document.createElement('li'),link=document.createElement('a');link.href='/download/'+item.id;link.textContent=item.name+' ('+(item.size/1024/1024).toFixed(1)+' MB)';link.download=item.name;row.append(link);list.append(row);}
+  }catch{list.textContent='목록을 불러올 수 없습니다.';}
+  setTimeout(loadDownloads,3000);
+}
+loadDownloads();
+form.addEventListener('submit',async event=>{
+  event.preventDefault();send.disabled=true;results.replaceChildren();progress.hidden=false;
+  for(const file of files.files){
+    const row=document.createElement('li');results.append(row);row.textContent=file.name+' — 업로드 중';
+    try{
+      const result=await new Promise((resolve,reject)=>{
+        const xhr=new XMLHttpRequest();xhr.open('POST','/upload?name='+encodeURIComponent(file.name));
+        xhr.upload.onprogress=e=>{if(e.lengthComputable)progress.value=e.loaded/e.total*100;};
+        xhr.onload=()=>{try{const data=JSON.parse(xhr.responseText);xhr.status===201?resolve(data):reject(new Error(data.error));}catch(error){reject(error);}};
+        xhr.onerror=()=>reject(new Error('서버 연결에 실패했습니다.'));xhr.send(file);
+      });
+      row.textContent='저장 완료: '+result.name;
+    }catch(error){row.textContent=file.name+' — '+error.message;}
+  }
+  send.disabled=false;progress.hidden=true;
+});
+</script>
+</html>

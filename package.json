@@ -1,0 +1,5 @@
+{
+  "name": "simple-local-upload",
+  "private": true,
+  "scripts": { "start": "node server.js", "test": "node --test server.test.js" }
+}

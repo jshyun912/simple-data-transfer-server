@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>업로드 현황</title>
+<link rel="stylesheet" href="/ui.css">
+<header><div><span class="eyebrow">LOCAL ADMIN · 이 컴퓨터 전용</span><h1>파일 전송 관리</h1><p>공유할 파일을 등록하고 실시간 전송 현황을 확인하세요.</p></div><a href="/">← 메인 화면</a></header>
+<article>
+<h2><span class="section-number">01</span>다운로드 파일 공유</h2>
+<p>공유할 파일의 전체 경로를 입력하세요. 탐색기에서 파일을 Shift+우클릭 → 경로로 복사 후 붙여넣을 수 있습니다.</p>
+<form id="share-form"><input id="share-path" aria-label="공유할 파일 경로" placeholder="C:\Users\…\파일.zip" required><button id="open-file" type="button">열기</button> <button>공유 등록</button></form>
+<p id="share-message" role="status"></p><ul id="shares"></ul>
+<small>파일을 복사하지 않고 원본 경로만 연결합니다. 서버를 끄면 공유 목록은 사라지며 원본 파일은 유지됩니다.</small>
+</article>
+<h2 style="margin-top:32px"><span class="section-number">02</span>실시간 업로드 현황</h2>
+<p id="connection" role="status">연결 중…</p><main id="list"></main>
+<small>서버 실행 이후의 전송 내역을 표시합니다. 완료 내역은 최대 200건까지 보관하며 서버 재시작 시 초기화됩니다.</small>
+<script>
+const list=document.querySelector('#list'),connection=document.querySelector('#connection');
+document.querySelector('#open-file').onclick=async()=>{
+ const button=document.querySelector('#open-file'),message=document.querySelector('#share-message');button.disabled=true;message.textContent='파일 선택 창에서 파일을 선택하세요.';
+ try{const response=await fetch('/api/shares/pick',{method:'POST'});const result=await response.json();if(!response.ok)throw new Error(result.error);if(result.path){document.querySelector('#share-path').value=result.path;message.textContent='파일을 선택했습니다. 공유 등록을 누르세요.';}else{message.textContent='파일 선택을 취소했습니다.';}}catch(e){message.textContent=e.message;}finally{button.disabled=false;}
+};
+async function loadShares(){
+ const response=await fetch('/api/shares');if(!response.ok)throw new Error('공유 목록을 불러올 수 없습니다.');
+ const items=await response.json(),container=document.querySelector('#shares');container.replaceChildren();
+ for(const item of items){const row=document.createElement('li'),label=document.createElement('span'),button=document.createElement('button');label.textContent=item.name+' — '+item.path+' ';button.textContent='공유 해제';button.onclick=async()=>{try{const r=await fetch('/api/shares/'+item.id,{method:'DELETE'});if(!r.ok)throw new Error('해제 실패');await loadShares();}catch(e){document.querySelector('#share-message').textContent=e.message;}};row.append(label,button);container.append(row);}
+}
+document.querySelector('#share-form').onsubmit=async event=>{
+ event.preventDefault();const message=document.querySelector('#share-message');
+ try{const response=await fetch('/api/shares',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:document.querySelector('#share-path').value})});const result=await response.json();if(!response.ok)throw new Error(result.error);message.textContent='공유 등록 완료: '+result.name;document.querySelector('#share-path').value='';await loadShares();}catch(e){message.textContent=e.message;}
+};
+loadShares().catch(e=>document.querySelector('#share-message').textContent=e.message);
+function bytes(n){const units=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<units.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+units[i];}
+async function refresh(){
+  try{
+    const response=await fetch('/api/uploads',{cache:'no-store'});if(!response.ok)throw new Error();
+    const items=await response.json();
+    connection.textContent='진행 중 '+items.filter(x=>x.status==='uploading').length+'건 · '+new Date().toLocaleTimeString('ko-KR')+' 갱신';
+    list.replaceChildren();
+    if(!items.length){const empty=document.createElement('article');empty.textContent='아직 업로드 내역이 없습니다.';list.append(empty);}
+    for(const item of items){
+      const card=document.createElement('article'),title=document.createElement('h2'),bar=document.createElement('progress'),details=document.createElement('div'),state=document.createElement('span'),volume=document.createElement('span'),info=document.createElement('p');
+      title.textContent=item.name;bar.max=item.total||1;if(item.total||item.status!=='uploading')bar.value=item.status==='completed'?bar.max:item.received/(item.total||1)*bar.max;
+      state.textContent=({uploading:'받는 중',completed:'저장 완료',failed:'실패 / 중단'})[item.status];
+      volume.textContent=bytes(item.received)+(item.total?' / '+bytes(item.total)+' ('+Math.min(100,item.received/item.total*100).toFixed(1)+'%)':' / 전체 크기 미상');
+      details.className='detail';details.append(state,volume);
+      const seconds=Math.max(1,((item.endedAt||Date.now())-item.startedAt)/1000);
+      info.textContent='시작 '+new Date(item.startedAt).toLocaleString('ko-KR')+' · 평균 '+bytes(item.received/seconds)+'/s';
+      card.append(title,bar,details,info);
+      if(item.status==='completed'||item.status==='failed'){
+        const remove=document.createElement('button');remove.className='remove-history';remove.textContent='내역 삭제';remove.setAttribute('aria-label',item.name+' 전송 내역 삭제');
+        remove.onclick=async()=>{remove.disabled=true;try{const response=await fetch('/api/uploads/'+item.id,{method:'DELETE'});if(!response.ok){const result=await response.json();throw new Error(result.error);}card.remove();}catch(error){connection.textContent=error.message;remove.disabled=false;}};
+        card.append(remove);
+      }
+      list.append(card);
+    }
+  }catch{connection.textContent='서버에 연결할 수 없습니다. 재연결 중…';}
+  setTimeout(refresh,1000);
+}
+refresh();
+</script>
+</html>
